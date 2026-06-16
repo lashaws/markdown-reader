@@ -1,0 +1,7 @@
+# Build output (regenerate with ./build.sh)
+Markdown Reader.app/
+*.app/
+build/
+
+# macOS
+.DS_Store

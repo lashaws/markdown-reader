@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Markdown Reader</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --border:#d1d9e0;
+    --link:#0969da; --code-bg:#f6f8fa; --code-fg:#1f2328; --quote:#59636e;
+    --table-alt:#f6f8fa; --hr:#d1d9e0; --sel:#b6d6ff;
+    --tk-comment:#6e7781; --tk-string:#0a3069; --tk-keyword:#cf222e;
+    --tk-number:#0550ae; --tk-func:#8250df; --tk-attr:#116329;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --border:#3d444d;
+      --link:#4493f8; --code-bg:#161b22; --code-fg:#e6edf3; --quote:#9198a1;
+      --table-alt:#161b22; --hr:#3d444d; --sel:#264f78;
+      --tk-comment:#8b949e; --tk-string:#a5d6ff; --tk-keyword:#ff7b72;
+      --tk-number:#79c0ff; --tk-func:#d2a8ff; --tk-attr:#7ee787;
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);}
+  body{
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--sel);}
+  #wrap{max-width:880px;margin:0 auto;padding:46px 56px 120px;}
+  #content{word-wrap:break-word;}
+  #content > *:first-child{margin-top:0;}
+  h1,h2,h3,h4,h5,h6{margin:1.5em 0 .6em;font-weight:600;line-height:1.25;}
+  h1{font-size:2em;padding-bottom:.3em;border-bottom:1px solid var(--border);}
+  h2{font-size:1.5em;padding-bottom:.3em;border-bottom:1px solid var(--border);}
+  h3{font-size:1.25em;} h4{font-size:1em;} h5{font-size:.9em;} h6{font-size:.85em;color:var(--muted);}
+  p{margin:0 0 1em;}
+  a{color:var(--link);text-decoration:none;} a:hover{text-decoration:underline;}
+  ul,ol{margin:0 0 1em;padding-left:2em;} li{margin:.25em 0;}
+  li > ul, li > ol{margin:.25em 0;}
+  blockquote{margin:0 0 1em;padding:0 1em;color:var(--quote);border-left:.25em solid var(--border);}
+  blockquote > :last-child{margin-bottom:0;}
+  hr{height:1px;border:0;background:var(--hr);margin:1.6em 0;}
+  img{max-width:100%;}
+  code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:.88em;}
+  p code,li code,td code{background:var(--code-bg);padding:.2em .4em;border-radius:6px;}
+  pre{background:var(--code-bg);color:var(--code-fg);padding:14px 16px;border-radius:8px;overflow:auto;margin:0 0 1em;line-height:1.45;}
+  pre code{background:none;padding:0;font-size:.85em;display:block;}
+  table{border-collapse:collapse;margin:0 0 1em;display:block;overflow:auto;width:max-content;max-width:100%;}
+  th,td{border:1px solid var(--border);padding:6px 13px;}
+  tr:nth-child(2n){background:var(--table-alt);}
+  th{font-weight:600;}
+  del{opacity:.7;}
+  .task-list-item{list-style:none;}
+  .task-list-item input{margin-right:.5em;}
+  #source{display:none;}
+  #source pre{margin:0;}
+  .tk-comment{color:var(--tk-comment);font-style:italic;}
+  .tk-string{color:var(--tk-string);}
+  .tk-keyword{color:var(--tk-keyword);}
+  .tk-number{color:var(--tk-number);}
+  .tk-func{color:var(--tk-func);}
+  .tk-attr{color:var(--tk-attr);}
+  #empty{color:var(--muted);text-align:center;margin-top:30vh;font-size:1.1em;}
+  /* find bar */
+  #findbar{position:fixed;top:12px;right:18px;display:none;align-items:center;gap:4px;
+    background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:6px 8px;
+    box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:1000;font-size:13px;}
+  #findbar.show{display:flex;}
+  #findinput{border:1px solid var(--border);background:var(--code-bg);color:var(--fg);
+    border-radius:6px;padding:5px 9px;font-size:13px;width:210px;outline:none;}
+  #findinput:focus{border-color:var(--link);}
+  #findcount{color:var(--muted);min-width:52px;text-align:center;font-variant-numeric:tabular-nums;}
+  .find-btn{border:0;background:transparent;color:var(--fg);cursor:pointer;font-size:14px;
+    padding:3px 8px;border-radius:6px;line-height:1;}
+  .find-btn:hover{background:var(--code-bg);}
+  .find-btn:disabled{opacity:.35;cursor:default;background:transparent;}
+  mark.find-hit{background:#ffd33d;color:#1f2328;border-radius:2px;}
+  mark.find-hit.current{background:#ff8c00;color:#1f2328;}
+  @media (prefers-color-scheme: dark){
+    mark.find-hit{background:#9e6a03;color:#fff;}
+    mark.find-hit.current{background:#e36209;color:#fff;}
+  }
+  /* line/word count badge */
+  #stats{position:fixed;bottom:12px;right:16px;display:none;
+    background:var(--code-bg);color:var(--muted);border:1px solid var(--border);
+    border-radius:20px;padding:3px 11px;font-size:12px;font-variant-numeric:tabular-nums;
+    opacity:.9;z-index:900;user-select:none;}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <article id="content"></article>
+  <div id="source"><pre><code></code></pre></div>
+  <div id="empty">Open a <code>.md</code> file to read it.</div>
+</div>
+<div id="findbar">
+  <input id="findinput" type="text" placeholder="Find" autocomplete="off" spellcheck="false">
+  <span id="findcount"></span>
+  <button class="find-btn" id="findprev" title="Previous (&#8679;&#8629;)">&#8593;</button>
+  <button class="find-btn" id="findnext" title="Next (&#8629;)">&#8595;</button>
+  <button class="find-btn" id="findclose" title="Close (esc)">&#10005;</button>
+</div>
+<div id="stats"></div>
+<script>
+"use strict";
+(function(){
+  /* ---------- helpers ---------- */
+  function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+  function escAttr(s){return esc(s).replace(/"/g,"&quot;");}
+
+  /* ---------- lightweight generic syntax highlighter ---------- */
+  var KEYWORDS = new Set(("abstract and as assert async await begin bool boolean break byte case catch char "+
+    "class const continue def default del do double elif else end enum except export extends extern "+
+    "false final finally float fn for from func function global go goto if impl implements import in "+
+    "int interface is lambda let long match mod module mut namespace new nil none not null or package "+
+    "pass private protected public raise return self short signed sizeof static struct super switch "+
+    "this throw throws trait true try type typedef typeof union unsigned use using var virtual void "+
+    "volatile when where while with yield").split(" "));
+
+  // single pass: comments | strings | numbers | identifiers; everything else escaped verbatim
+  var TOKEN = /(\/\*[\s\S]*?\*\/)|(\/\/[^\n]*|#[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(\b0x[0-9a-fA-F]+\b|\b\d+\.?\d*(?:[eE][+-]?\d+)?\b)|([A-Za-z_$][A-Za-z0-9_$]*)/g;
+
+  function highlight(code){
+    var out = "", last = 0, m;
+    TOKEN.lastIndex = 0;
+    while((m = TOKEN.exec(code)) !== null){
+      if(m[0] === ""){ TOKEN.lastIndex++; continue; }
+      if(m.index > last) out += esc(code.slice(last, m.index));
+      if(m[1] || m[2])  out += '<span class="tk-comment">'+esc(m[0])+'</span>';
+      else if(m[3])     out += '<span class="tk-string">'+esc(m[0])+'</span>';
+      else if(m[4])     out += '<span class="tk-number">'+esc(m[0])+'</span>';
+      else if(m[5])     out += KEYWORDS.has(m[0]) ? '<span class="tk-keyword">'+esc(m[0])+'</span>' : esc(m[0]);
+      last = TOKEN.lastIndex;
+    }
+    if(last < code.length) out += esc(code.slice(last));
+    return out;
+  }
+
+  /* ---------- inline markdown ---------- */
+  // placeholders use private-use sentinels so they never collide with literal digits
+  var PH_OPEN = "", PH_CLOSE = "";
+  var PH_RE = /(\d+)/g;
+
+  function inline(text){
+    var holders = [];
+    function hold(html){ holders.push(html); return PH_OPEN + (holders.length-1) + PH_CLOSE; }
+
+    text = text.replace(/\\([\\`*_{}\[\]()#+\-.!~>|])/g, function(m,c){ return hold(esc(c)); });
+    text = text.replace(/(`+)([\s\S]*?)\1/g, function(m,t,c){ return hold("<code>"+esc(c.replace(/^ | $/g,""))+"</code>"); });
+    text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, function(m,a,src,t){
+      return hold('<img src="'+escAttr(src)+'" alt="'+escAttr(a)+'"'+(t?' title="'+escAttr(t)+'"':'')+'>');
+    });
+    text = text.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, function(m,txt,href,t){
+      return hold('<a href="'+escAttr(href)+'"'+(t?' title="'+escAttr(t)+'"':'')+'>'+inline(txt)+'</a>');
+    });
+    text = text.replace(/<((?:https?|mailto):[^>\s]+)>/g, function(m,u){ return hold('<a href="'+escAttr(u)+'">'+esc(u)+'</a>'); });
+
+    text = esc(text);
+
+    text = text.replace(/\*\*\*([^*]+)\*\*\*/g, "<strong><em>$1</em></strong>");
+    text = text.replace(/\*\*([^*]+?)\*\*/g, "<strong>$1</strong>");
+    text = text.replace(/__([^_]+?)__/g, "<strong>$1</strong>");
+    text = text.replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, "$1<em>$2</em>");
+    text = text.replace(/(^|[^_\w])_([^_\s][^_]*?)_(?![\w])/g, "$1<em>$2</em>");
+    text = text.replace(/~~([^~]+?)~~/g, "<del>$1</del>");
+
+    text = text.replace(PH_RE, function(m,i){ return holders[+i]; });
+    return text;
+  }
+
+  /* ---------- block parsing ---------- */
+  var reHeading = /^ {0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/;
+  var reHr      = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
+  var reFence   = /^(\s*)(```+|~~~+)\s*([^\s`]*)\s*$/;
+  var reQuote   = /^ {0,3}>\s?(.*)$/;
+  var reUl      = /^(\s*)([-*+])\s+(.*)$/;
+  var reOl      = /^(\s*)(\d+)[.)]\s+(.*)$/;
+  var reTableSep= /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
+
+  function indentOf(line){ var m=line.match(/^(\s*)/); return m[1].replace(/\t/g,"    ").length; }
+  function isListItem(line){ return reUl.test(line)||reOl.test(line); }
+  function isOrdered(line){ return reOl.test(line); }
+
+  function parseBlocks(src){
+    var lines = src.replace(/\r\n?/g,"\n").replace(/\t/g,"    ").split("\n");
+    var out = [];
+    var i = 0;
+    while(i < lines.length){
+      var line = lines[i];
+
+      if(/^\s*$/.test(line)){ i++; continue; }
+
+      var f = line.match(reFence);
+      if(f){
+        var fence = f[2][0], lang = f[3] || "", buf = [];
+        var closeRe = new RegExp("^\\s*"+fence+"{3,}\\s*$");
+        i++;
+        while(i < lines.length && !closeRe.test(lines[i])){ buf.push(lines[i]); i++; }
+        i++;
+        out.push('<pre><code'+(lang?' class="language-'+escAttr(lang)+'"':'')+'>'+highlight(buf.join("\n"))+'</code></pre>');
+        continue;
+      }
+
+      var h = line.match(reHeading);
+      if(h){ var lvl=h[1].length; out.push("<h"+lvl+">"+inline(h[2])+"</h"+lvl+">"); i++; continue; }
+
+      if(reHr.test(line)){ out.push("<hr>"); i++; continue; }
+
+      if(reQuote.test(line)){
+        var qbuf=[];
+        while(i<lines.length && (reQuote.test(lines[i]) || (!/^\s*$/.test(lines[i]) && qbuf.length && !isListItem(lines[i])))){
+          var qm = lines[i].match(reQuote);
+          qbuf.push(qm ? qm[1] : lines[i]);
+          i++;
+        }
+        out.push("<blockquote>"+parseBlocks(qbuf.join("\n"))+"</blockquote>");
+        continue;
+      }
+
+      if(line.indexOf("|")!==-1 && i+1<lines.length && reTableSep.test(lines[i+1])){
+        var headerCells = splitRow(line);
+        var aligns = splitRow(lines[i+1]).map(function(c){
+          var l=/^:/.test(c.trim()), r=/:$/.test(c.trim());
+          return l&&r?"center":r?"right":l?"left":"";
+        });
+        i += 2;
+        var rows = [];
+        while(i<lines.length && lines[i].indexOf("|")!==-1 && !/^\s*$/.test(lines[i])){
+          rows.push(splitRow(lines[i])); i++;
+        }
+        out.push(renderTable(headerCells, aligns, rows));
+        continue;
+      }
+
+      if(isListItem(line)){
+        var lr = parseList(lines, i, indentOf(line));
+        out.push(lr.html); i = lr.next; continue;
+      }
+
+      var pbuf=[];
+      while(i<lines.length && !/^\s*$/.test(lines[i]) &&
+            !reHeading.test(lines[i]) && !reHr.test(lines[i]) && !reFence.test(lines[i]) &&
+            !reQuote.test(lines[i]) && !isListItem(lines[i]) &&
+            !(lines[i].indexOf("|")!==-1 && i+1<lines.length && reTableSep.test(lines[i+1]))){
+        pbuf.push(lines[i]); i++;
+      }
+      var ptext = pbuf.join("\n").replace(/ {2,}\n/g,"<br>\n");
+      out.push("<p>"+inline(ptext)+"</p>");
+    }
+    return out.join("\n");
+  }
+
+  function splitRow(line){
+    var s = line.trim().replace(/^\|/,"").replace(/\|$/,"");
+    var cells=[], cur="", esc=false;
+    for(var k=0;k<s.length;k++){
+      var ch=s[k];
+      if(esc){ cur+=ch; esc=false; continue; }
+      if(ch==="\\"){ cur+=ch; esc=true; continue; }
+      if(ch==="|"){ cells.push(cur); cur=""; } else cur+=ch;
+    }
+    cells.push(cur);
+    return cells.map(function(c){return c.trim();});
+  }
+
+  function renderTable(header, aligns, rows){
+    function cell(tag, text, align){ return "<"+tag+(align?' style="text-align:'+align+'"':'')+">"+inline(text)+"</"+tag+">"; }
+    var html="<table><thead><tr>";
+    header.forEach(function(c,idx){ html+=cell("th",c,aligns[idx]||""); });
+    html+="</tr></thead><tbody>";
+    rows.forEach(function(r){
+      html+="<tr>";
+      for(var c=0;c<header.length;c++){ html+=cell("td", r[c]!==undefined?r[c]:"", aligns[c]||""); }
+      html+="</tr>";
+    });
+    return html+"</tbody></table>";
+  }
+
+  function parseList(lines, start, baseIndent){
+    var ordered = isOrdered(lines[start]);
+    var html = ordered ? "<ol>" : "<ul>";
+    var i = start;
+    while(i < lines.length){
+      if(/^\s*$/.test(lines[i])){
+        var j=i+1;
+        while(j<lines.length && /^\s*$/.test(lines[j])) j++;
+        // continue same list only if next item is same type at same indent
+        if(j<lines.length && isListItem(lines[j]) && indentOf(lines[j])===baseIndent && isOrdered(lines[j])===ordered){ i=j; continue; }
+        break;
+      }
+      var ind = indentOf(lines[i]);
+      if(!isListItem(lines[i]) || ind < baseIndent) break;
+      if(ind > baseIndent) break;
+      if(isOrdered(lines[i]) !== ordered) break; // marker type switched -> new list
+
+      var m = lines[i].match(reUl) || lines[i].match(reOl);
+      var itemLines = [ m[3] ];
+      i++;
+      while(i < lines.length){
+        if(/^\s*$/.test(lines[i])){
+          var k=i+1;
+          while(k<lines.length && /^\s*$/.test(lines[k])) k++;
+          if(k<lines.length && indentOf(lines[k])>baseIndent){ itemLines.push(""); i++; continue; }
+          break;
+        }
+        var ind2 = indentOf(lines[i]);
+        if(ind2 > baseIndent){ itemLines.push(lines[i].slice(baseIndent+2)); i++; continue; }
+        if(!isListItem(lines[i]) && ind2 >= baseIndent && ind2 > 0){ itemLines.push(lines[i].slice(baseIndent)); i++; continue; }
+        break;
+      }
+      html += "<li>" + renderItem(itemLines.join("\n")) + "</li>";
+    }
+    return { html: html + (ordered?"</ol>":"</ul>"), next: i };
+  }
+
+  function renderItem(text){
+    var task = text.match(/^\[([ xX])\]\s+([\s\S]*)$/);
+    var prefix="", isTask=false;
+    if(task){
+      isTask=true;
+      prefix = '<input type="checkbox" disabled'+(task[1].toLowerCase()==="x"?" checked":"")+'> ';
+      text = task[2];
+    }
+    var rest = text.split("\n").slice(1).join("\n");
+    var hasBlock = /\n\s*\n/.test(text) || /^\s*([-*+]|\d+[.)])\s/m.test(rest);
+    var inner;
+    if(/\n/.test(text) && hasBlock){
+      inner = parseBlocks(text);
+      inner = inner.replace(/^<p>([\s\S]*?)<\/p>\n?/, function(m,c){ return /<(ul|ol|pre|blockquote|table)/.test(m)? m : c+"\n"; });
+    } else {
+      inner = inline(text.trim());
+    }
+    if(isTask){
+      // mark the <li> as a task item via a wrapping span carrying the class on the list bullet
+      return '<span class="task-list-item">'+prefix+inner+'</span>';
+    }
+    return inner;
+  }
+
+  /* ---------- find in page ---------- */
+  var findQuery = "", findHits = [], findIndex = -1, findOpen = false;
+
+  function activeContainer(){
+    var src = document.getElementById("source");
+    return (src.style.display !== "none" && src.style.display !== "") ? src : document.getElementById("content");
+  }
+  function clearMarks(){
+    var marks = document.querySelectorAll("mark.find-hit");
+    for(var i=0;i<marks.length;i++){
+      var m = marks[i];
+      m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
+    }
+    document.getElementById("content").normalize();
+    document.getElementById("source").normalize();
+    findHits = []; findIndex = -1;
+  }
+  function setCurrent(i){
+    if(!findHits.length) return;
+    if(findIndex>=0 && findHits[findIndex]) findHits[findIndex].classList.remove("current");
+    findIndex = ((i % findHits.length) + findHits.length) % findHits.length;
+    var el = findHits[findIndex];
+    el.classList.add("current");
+    el.scrollIntoView({block:"center", inline:"nearest"});
+    document.getElementById("findcount").textContent = (findIndex+1)+"/"+findHits.length;
+  }
+  function doSearch(q){
+    clearMarks();
+    findQuery = q;
+    var countEl = document.getElementById("findcount");
+    if(!q){ countEl.textContent = ""; return; }
+    var container = activeContainer();
+    var re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+    var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(n){ return (n.nodeValue && n.nodeValue.length) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT; }
+    });
+    var nodes = [], n;
+    while((n = walker.nextNode())) nodes.push(n);
+    for(var k=0;k<nodes.length;k++){
+      var node = nodes[k], text = node.nodeValue;
+      re.lastIndex = 0;
+      if(!re.test(text)) continue;
+      re.lastIndex = 0;
+      var frag = document.createDocumentFragment(), last = 0, m;
+      while((m = re.exec(text)) !== null){
+        if(m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        var mk = document.createElement("mark");
+        mk.className = "find-hit";
+        mk.textContent = m[0];
+        frag.appendChild(mk);
+        last = m.index + m[0].length;
+        if(m[0] === "") re.lastIndex++;
+      }
+      if(last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    }
+    findHits = Array.prototype.slice.call(container.querySelectorAll("mark.find-hit"));
+    if(findHits.length){ findIndex = -1; setCurrent(0); }
+    else { countEl.textContent = "0/0"; }
+  }
+
+  window.MDFind = function(){
+    document.getElementById("findbar").classList.add("show");
+    findOpen = true;
+    var inp = document.getElementById("findinput");
+    inp.focus(); inp.select();
+    if(inp.value) doSearch(inp.value);
+  };
+  window.MDFindNext = function(){ if(findHits.length) setCurrent(findIndex+1); };
+  window.MDFindPrev = function(){ if(findHits.length) setCurrent(findIndex-1); };
+  window.MDFindClose = function(){
+    document.getElementById("findbar").classList.remove("show");
+    findOpen = false;
+    clearMarks();
+    document.getElementById("findcount").textContent = "";
+  };
+
+  (function wireFind(){
+    var inp = document.getElementById("findinput");
+    inp.addEventListener("input", function(){ doSearch(this.value); });
+    inp.addEventListener("keydown", function(e){
+      if(e.key === "Enter"){ e.preventDefault(); if(e.shiftKey) window.MDFindPrev(); else window.MDFindNext(); }
+      else if(e.key === "Escape"){ e.preventDefault(); window.MDFindClose(); }
+    });
+    document.getElementById("findnext").addEventListener("click", window.MDFindNext);
+    document.getElementById("findprev").addEventListener("click", window.MDFindPrev);
+    document.getElementById("findclose").addEventListener("click", window.MDFindClose);
+  })();
+
+  /* ---------- public API used by Swift ---------- */
+  window.MDRender = function(b64){
+    var md = decodeURIComponent(escape(atob(b64)));
+    document.getElementById("empty").style.display = "none";
+    document.getElementById("content").innerHTML = parseBlocks(md);
+    document.querySelector("#source code").innerHTML = highlight(md);
+    // line + word count
+    var norm = md.replace(/\r\n?/g, "\n");
+    var arr = norm.split("\n");
+    if(arr.length && arr[arr.length-1] === "") arr.pop(); // ignore trailing newline
+    var lineCount = arr.length;
+    var words = (norm.match(/\S+/g) || []).length;
+    var stats = document.getElementById("stats");
+    stats.textContent = lineCount.toLocaleString() + (lineCount === 1 ? " line" : " lines") +
+                        " · " + words.toLocaleString() + (words === 1 ? " word" : " words");
+    stats.style.display = "block";
+    if(findOpen && findQuery) doSearch(findQuery); // keep highlights after live reload
+  };
+  window.MDSetMode = function(mode){
+    var rendered = (mode !== "source");
+    document.getElementById("content").style.display = rendered ? "block" : "none";
+    document.getElementById("source").style.display  = rendered ? "none"  : "block";
+    if(findOpen && findQuery) doSearch(findQuery); // re-search the now-visible view
+    else clearMarks();
+  };
+  window.MDScrollFraction = function(){
+    var h = document.documentElement.scrollHeight - window.innerHeight;
+    return h>0 ? (window.scrollY / h) : 0;
+  };
+  window.MDScrollTo = function(frac){
+    var h = document.documentElement.scrollHeight - window.innerHeight;
+    window.scrollTo(0, h*frac);
+  };
+})();
+</script>
+</body>
+</html>
