@@ -9,7 +9,7 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
     var fileURL: URL?
     private(set) var isDirty = false
     private var mode: String = "rendered"
-    private static let modes = ["rendered", "source", "edit"]
+    private static let modes = ["rendered", "edit"]
     private var pageReady = false
     private var pendingB64: String?
     private var watchSource: DispatchSourceFileSystemObject?
@@ -59,7 +59,7 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
     func toolbar(_ t: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         guard id.rawValue == "viewMode" else { return nil }
-        let seg = NSSegmentedControl(labels: ["Rendered", "Source", "Edit"],
+        let seg = NSSegmentedControl(labels: ["Rendered", "Edit"],
                                      trackingMode: .selectOne,
                                      target: self, action: #selector(segChanged(_:)))
         seg.selectedSegment = 0
@@ -324,7 +324,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func saveDocument(_ s: Any?) { keyVC()?.save() }
     @objc func showRendered(_ s: Any?) { keyVC()?.setMode("rendered") }
-    @objc func showSource(_ s: Any?)   { keyVC()?.setMode("source") }
     @objc func showEditor(_ s: Any?)   { keyVC()?.setMode("edit") }
     @objc func performFindAction(_ s: Any?) { keyVC()?.findInPage() }
     @objc func findNextAction(_ s: Any?)    { keyVC()?.findNext() }
@@ -378,8 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewItem = NSMenuItem(); main.addItem(viewItem)
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(withTitle: "Rendered View", action: #selector(showRendered(_:)), keyEquivalent: "1")
-        viewMenu.addItem(withTitle: "Source View", action: #selector(showSource(_:)), keyEquivalent: "2")
-        viewMenu.addItem(withTitle: "Edit Mode", action: #selector(showEditor(_:)), keyEquivalent: "3")
+        viewMenu.addItem(withTitle: "Edit Mode", action: #selector(showEditor(_:)), keyEquivalent: "2")
         viewItem.submenu = viewMenu
 
         // Window menu

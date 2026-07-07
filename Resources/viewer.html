@@ -54,8 +54,6 @@
   del{opacity:.7;}
   .task-list-item{list-style:none;}
   .task-list-item input{margin-right:.5em;}
-  #source{display:none;}
-  #source pre{margin:0;}
   #editor{display:none;width:100%;border:0;outline:none;resize:none;overflow:hidden;
     background:var(--code-bg);color:var(--code-fg);border-radius:8px;padding:14px 16px;
     font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
@@ -96,7 +94,6 @@
 <body>
 <div id="wrap">
   <article id="content"></article>
-  <div id="source"><pre><code></code></pre></div>
   <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
   <div id="empty">Open a <code>.md</code> file to read it.</div>
 </div>
@@ -374,8 +371,7 @@
   var findQuery = "", findHits = [], findIndex = -1, findOpen = false;
 
   function activeContainer(){
-    var src = document.getElementById("source");
-    return (src.style.display !== "none" && src.style.display !== "") ? src : document.getElementById("content");
+    return document.getElementById("content");
   }
   function clearMarks(){
     var marks = document.querySelectorAll("mark.find-hit");
@@ -384,7 +380,6 @@
       m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
     }
     document.getElementById("content").normalize();
-    document.getElementById("source").normalize();
     findHits = []; findIndex = -1;
   }
   function setCurrent(i){
@@ -468,7 +463,6 @@
     if(!dirty && editor.value !== md) editor.value = md;
     document.getElementById("empty").style.display = "none";
     document.getElementById("content").innerHTML = parseBlocks(md);
-    document.querySelector("#source code").innerHTML = highlight(md);
     // line + word count
     var norm = md.replace(/\r\n?/g, "\n");
     var arr = norm.split("\n");
@@ -483,24 +477,20 @@
   };
   window.MDSetMode = function(mode){
     var content = document.getElementById("content");
-    var source  = document.getElementById("source");
     if(mode === "edit"){
       document.getElementById("empty").style.display = "none";
       content.style.display = "none";
-      source.style.display  = "none";
       var wasHidden = editor.style.display !== "block";
       editor.style.display = "block";
       autosize();
       if(wasHidden) editor.focus();
     } else {
       if(editor.style.display === "block" && dirty){
-        // preview unsaved edits in the other views
+        // preview unsaved edits in the rendered view
         content.innerHTML = parseBlocks(editor.value);
-        source.querySelector("code").innerHTML = highlight(editor.value);
       }
       editor.style.display = "none";
-      content.style.display = (mode !== "source") ? "block" : "none";
-      source.style.display  = (mode === "source") ? "block" : "none";
+      content.style.display = "block";
     }
     if(findOpen && findQuery) doSearch(findQuery); // re-search the now-visible view
     else clearMarks();
