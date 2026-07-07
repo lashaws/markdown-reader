@@ -56,6 +56,10 @@
   .task-list-item input{margin-right:.5em;}
   #source{display:none;}
   #source pre{margin:0;}
+  #editor{display:none;width:100%;border:0;outline:none;resize:none;overflow:hidden;
+    background:var(--code-bg);color:var(--code-fg);border-radius:8px;padding:14px 16px;
+    font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    font-size:13.6px;line-height:1.45;-webkit-font-smoothing:antialiased;}
   .tk-comment{color:var(--tk-comment);font-style:italic;}
   .tk-string{color:var(--tk-string);}
   .tk-keyword{color:var(--tk-keyword);}
@@ -93,6 +97,7 @@
 <div id="wrap">
   <article id="content"></article>
   <div id="source"><pre><code></code></pre></div>
+  <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
   <div id="empty">Open a <code>.md</code> file to read it.</div>
 </div>
 <div id="findbar">
@@ -339,6 +344,32 @@
     return inner;
   }
 
+  /* ---------- editing ---------- */
+  var rawMD = "", dirty = false;
+  var editor = document.getElementById("editor");
+
+  function notifyDirty(){
+    try{ window.webkit.messageHandlers.dirty.postMessage(dirty); }catch(e){}
+  }
+  function setDirty(d){ if(dirty !== d){ dirty = d; notifyDirty(); } }
+  function autosize(){
+    editor.style.height = "auto";
+    editor.style.height = Math.max(editor.scrollHeight + 2, window.innerHeight * 0.7) + "px";
+  }
+  editor.addEventListener("input", function(){ setDirty(editor.value !== rawMD); autosize(); });
+  editor.addEventListener("keydown", function(e){
+    if(e.key === "Tab"){
+      e.preventDefault();
+      editor.setRangeText("  ", editor.selectionStart, editor.selectionEnd, "end");
+      setDirty(editor.value !== rawMD); autosize();
+    }
+  });
+  window.addEventListener("resize", function(){ if(editor.style.display === "block") autosize(); });
+
+  window.MDGetContent = function(){ return btoa(unescape(encodeURIComponent(editor.value))); };
+  window.MDIsDirty = function(){ return dirty; };
+  window.MDMarkSaved = function(){ rawMD = editor.value; setDirty(false); };
+
   /* ---------- find in page ---------- */
   var findQuery = "", findHits = [], findIndex = -1, findOpen = false;
 
@@ -431,6 +462,10 @@
   /* ---------- public API used by Swift ---------- */
   window.MDRender = function(b64){
     var md = decodeURIComponent(escape(atob(b64)));
+    rawMD = md;
+    // keep unsaved edits if the file changed underneath us; avoid resetting the
+    // caret when the incoming content matches the editor (e.g. right after save)
+    if(!dirty && editor.value !== md) editor.value = md;
     document.getElementById("empty").style.display = "none";
     document.getElementById("content").innerHTML = parseBlocks(md);
     document.querySelector("#source code").innerHTML = highlight(md);
@@ -447,9 +482,26 @@
     if(findOpen && findQuery) doSearch(findQuery); // keep highlights after live reload
   };
   window.MDSetMode = function(mode){
-    var rendered = (mode !== "source");
-    document.getElementById("content").style.display = rendered ? "block" : "none";
-    document.getElementById("source").style.display  = rendered ? "none"  : "block";
+    var content = document.getElementById("content");
+    var source  = document.getElementById("source");
+    if(mode === "edit"){
+      document.getElementById("empty").style.display = "none";
+      content.style.display = "none";
+      source.style.display  = "none";
+      var wasHidden = editor.style.display !== "block";
+      editor.style.display = "block";
+      autosize();
+      if(wasHidden) editor.focus();
+    } else {
+      if(editor.style.display === "block" && dirty){
+        // preview unsaved edits in the other views
+        content.innerHTML = parseBlocks(editor.value);
+        source.querySelector("code").innerHTML = highlight(editor.value);
+      }
+      editor.style.display = "none";
+      content.style.display = (mode !== "source") ? "block" : "none";
+      source.style.display  = (mode === "source") ? "block" : "none";
+    }
     if(findOpen && findQuery) doSearch(findQuery); // re-search the now-visible view
     else clearMarks();
   };

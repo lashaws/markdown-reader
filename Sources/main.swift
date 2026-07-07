@@ -3,10 +3,13 @@ import WebKit
 
 // MARK: - Viewer window (one per open file)
 
-final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NSToolbarDelegate {
+final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NSToolbarDelegate,
+                                    WKScriptMessageHandler, NSWindowDelegate {
     let webView: WKWebView
     var fileURL: URL?
+    private(set) var isDirty = false
     private var mode: String = "rendered"
+    private static let modes = ["rendered", "source", "edit"]
     private var pageReady = false
     private var pendingB64: String?
     private var watchSource: DispatchSourceFileSystemObject?
@@ -26,6 +29,8 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
         super.init(window: window)
 
         webView.navigationDelegate = self
+        webView.configuration.userContentController.add(self, name: "dirty")
+        window.delegate = self
         window.contentView = webView
         setupToolbar()
 
@@ -54,7 +59,7 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
     func toolbar(_ t: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         guard id.rawValue == "viewMode" else { return nil }
-        let seg = NSSegmentedControl(labels: ["Rendered", "Source"],
+        let seg = NSSegmentedControl(labels: ["Rendered", "Source", "Edit"],
                                      trackingMode: .selectOne,
                                      target: self, action: #selector(segChanged(_:)))
         seg.selectedSegment = 0
@@ -66,12 +71,12 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
     }
 
     @objc private func segChanged(_ sender: NSSegmentedControl) {
-        setMode(sender.selectedSegment == 0 ? "rendered" : "source")
+        setMode(Self.modes[sender.selectedSegment])
     }
 
     func setMode(_ m: String) {
         mode = m
-        segmented?.selectedSegment = (m == "rendered" ? 0 : 1)
+        segmented?.selectedSegment = Self.modes.firstIndex(of: m) ?? 0
         webView.evaluateJavaScript("window.MDSetMode('\(m)')", completionHandler: nil)
     }
 
@@ -134,6 +139,71 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
             return
         }
         decisionHandler(.allow)
+    }
+
+    // MARK: Editing & saving
+
+    func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "dirty", let d = message.body as? Bool {
+            isDirty = d
+            window?.isDocumentEdited = d
+        }
+    }
+
+    func save(completion: ((Bool) -> Void)? = nil) {
+        webView.evaluateJavaScript("window.MDGetContent()") { [weak self] result, _ in
+            guard let self = self, let b64 = result as? String,
+                  let data = Data(base64Encoded: b64) else { completion?(false); return }
+            if let url = self.fileURL {
+                self.write(data, to: url, completion: completion)
+            } else {
+                let panel = NSSavePanel()
+                panel.allowedFileTypes = ["md", "markdown", "txt"]
+                panel.nameFieldStringValue = "Untitled.md"
+                panel.beginSheetModal(for: self.window!) { resp in
+                    guard resp == .OK, let url = panel.url else { completion?(false); return }
+                    self.write(data, to: url, completion: completion)
+                }
+            }
+        }
+    }
+
+    private func write(_ data: Data, to url: URL, completion: ((Bool) -> Void)?) {
+        do {
+            try data.write(to: url, options: .atomic)
+            if fileURL != url {
+                fileURL = url
+                window?.title = url.lastPathComponent
+                window?.representedURL = url
+                startWatching(url)
+            }
+            webView.evaluateJavaScript("window.MDMarkSaved()", completionHandler: nil)
+            isDirty = false
+            window?.isDocumentEdited = false
+            completion?(true)
+        } catch {
+            NSAlert(error: error).runModal()
+            completion?(false)
+        }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard isDirty else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Do you want to save the changes made to \u{201C}\(sender.title)\u{201D}?"
+        alert.informativeText = "Your changes will be lost if you don\u{2019}t save them."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Don\u{2019}t Save")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            save { [weak self] ok in if ok { self?.window?.close() } }
+            return false
+        case .alertThirdButtonReturn:
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: Live reload (file watching)
@@ -213,6 +283,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // route dirty windows through the standard close prompt; if a save is
+        // chosen it completes asynchronously, so cancel and let the app quit
+        // when the last window closes
+        for c in controllers where c.isDirty && c.window?.isVisible == true {
+            c.window?.makeKeyAndOrderFront(nil)
+            guard let w = c.window else { continue }
+            if !c.windowShouldClose(w) { return .terminateCancel }
+            w.close()
+        }
+        return .terminateNow
+    }
+
     private func present(_ url: URL) {
         // reuse an empty placeholder window if present
         if let empty = controllers.first(where: { $0.fileURL == nil }) {
@@ -239,8 +322,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if panel.runModal() == .OK { for u in panel.urls { present(u) } }
     }
 
+    @objc func saveDocument(_ s: Any?) { keyVC()?.save() }
     @objc func showRendered(_ s: Any?) { keyVC()?.setMode("rendered") }
     @objc func showSource(_ s: Any?)   { keyVC()?.setMode("source") }
+    @objc func showEditor(_ s: Any?)   { keyVC()?.setMode("edit") }
     @objc func performFindAction(_ s: Any?) { keyVC()?.findInPage() }
     @objc func findNextAction(_ s: Any?)    { keyVC()?.findNext() }
     @objc func findPrevAction(_ s: Any?)    { keyVC()?.findPrev() }
@@ -265,6 +350,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileItem = NSMenuItem(); main.addItem(fileItem)
         let fileMenu = NSMenu(title: "File")
         fileMenu.addItem(withTitle: "Open…", action: #selector(openDocument(_:)), keyEquivalent: "o")
+        fileMenu.addItem(withTitle: "Save", action: #selector(saveDocument(_:)), keyEquivalent: "s")
         fileMenu.addItem(.separator())
         let close = fileMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         close.keyEquivalentModifierMask = [.command]
@@ -273,7 +359,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Edit menu
         let editItem = NSMenuItem(); main.addItem(editItem)
         let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: Selector(("cut:")), keyEquivalent: "x")
         editMenu.addItem(withTitle: "Copy", action: Selector(("copy:")), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: Selector(("paste:")), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: Selector(("selectAll:")), keyEquivalent: "a")
         editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "Find…", action: #selector(performFindAction(_:)), keyEquivalent: "f")
@@ -287,6 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(withTitle: "Rendered View", action: #selector(showRendered(_:)), keyEquivalent: "1")
         viewMenu.addItem(withTitle: "Source View", action: #selector(showSource(_:)), keyEquivalent: "2")
+        viewMenu.addItem(withTitle: "Edit Mode", action: #selector(showEditor(_:)), keyEquivalent: "3")
         viewItem.submenu = viewMenu
 
         // Window menu

@@ -11,8 +11,10 @@ it in a clean, GitHub-style view.
 
 - **Clean rendered view by default** — headings, lists, tables, task lists,
   blockquotes, fenced code, links, images
-- **Rendered / Source toggle** (toolbar, or ⌘1 / ⌘2) — Source shows the raw
-  Markdown with syntax coloring
+- **Rendered / Source / Edit toggle** (toolbar, or ⌘1 / ⌘2 / ⌘3) — Source shows the
+  raw Markdown with syntax coloring; Edit lets you change the document in place
+- **Save with ⌘S** — saves back to the file (or prompts for a location for new
+  documents); unsaved changes are flagged in the window and prompt before closing
 - **Automatic dark / light mode** — follows the system appearance
 - **Live reload** — the view updates the instant you save the file (scroll
   position preserved)
