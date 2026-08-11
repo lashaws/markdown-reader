@@ -10,6 +10,8 @@
     <string>MarkdownReader</string>
     <key>CFBundleIdentifier</key>
     <string>com.lsalta.MarkdownReader</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundleShortVersionString</key>
