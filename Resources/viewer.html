@@ -29,7 +29,7 @@
   }
   ::selection{background:var(--sel);}
   #wrap{max-width:880px;margin:0 auto;padding:46px 56px 120px;}
-  #content{word-wrap:break-word;}
+  #content{word-wrap:break-word;outline:none;caret-color:var(--fg);}
   #content > *:first-child{margin-top:0;}
   h1,h2,h3,h4,h5,h6{margin:1.5em 0 .6em;font-weight:600;line-height:1.25;}
   h1{font-size:2em;padding-bottom:.3em;border-bottom:1px solid var(--border);}
@@ -54,8 +54,15 @@
   del{opacity:.7;}
   .task-list-item{list-style:none;}
   .task-list-item input{margin-right:.5em;}
-  #editor{display:none;width:100%;border:0;outline:none;resize:none;overflow:hidden;
-    background:var(--code-bg);color:var(--code-fg);border-radius:8px;padding:14px 16px;
+  #editwrap{display:none;align-items:stretch;background:var(--code-bg);border-radius:8px;overflow:hidden;}
+  #gutter{flex:0 0 auto;text-align:right;color:var(--muted);
+    -webkit-user-select:none;user-select:none;
+    padding:14px 10px 0 14px;border-right:1px solid var(--border);
+    font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    font-size:13.6px;line-height:1.45;white-space:pre;-webkit-font-smoothing:antialiased;}
+  #editor{display:block;flex:1 1 auto;min-width:0;width:100%;border:0;outline:none;resize:none;
+    overflow-x:auto;overflow-y:hidden;white-space:pre;
+    background:transparent;color:var(--code-fg);border-radius:0;padding:14px 16px;
     font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
     font-size:13.6px;line-height:1.45;-webkit-font-smoothing:antialiased;}
   .tk-comment{color:var(--tk-comment);font-style:italic;}
@@ -93,8 +100,11 @@
 </head>
 <body>
 <div id="wrap">
-  <article id="content"></article>
-  <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+  <article id="content" contenteditable="true" spellcheck="false"></article>
+  <div id="editwrap">
+    <div id="gutter" aria-hidden="true"></div>
+    <textarea id="editor" wrap="off" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+  </div>
   <div id="empty">Open a <code>.md</code> file to read it.</div>
 </div>
 <div id="findbar">
@@ -322,7 +332,7 @@
     var prefix="", isTask=false;
     if(task){
       isTask=true;
-      prefix = '<input type="checkbox" disabled'+(task[1].toLowerCase()==="x"?" checked":"")+'> ';
+      prefix = '<input type="checkbox" contenteditable="false"'+(task[1].toLowerCase()==="x"?" checked":"")+'> ';
       text = task[2];
     }
     var rest = text.split("\n").slice(1).join("\n");
@@ -341,9 +351,222 @@
     return inner;
   }
 
+  /* ---------- HTML -> Markdown (serializer for rendered-view editing) ---------- */
+  // Covers exactly the HTML our own renderer emits, plus the noise WebKit
+  // contenteditable produces (divs, styled spans, &nbsp;). Never throws:
+  // domToMarkdown falls back to textContent on any error.
+  var BLOCK_TAGS = {ADDRESS:1,ARTICLE:1,ASIDE:1,BLOCKQUOTE:1,DIV:1,DL:1,FIGURE:1,FOOTER:1,
+    H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,HEADER:1,HR:1,MAIN:1,NAV:1,OL:1,P:1,PRE:1,SECTION:1,TABLE:1,UL:1};
+
+  function domToMarkdown(root){
+    try{
+      var md = serializeBlockChildren(root);
+      if(md === "") return "";
+      return md.replace(/\n+$/,"") + "\n";
+    }catch(e){
+      return root.textContent || "";
+    }
+  }
+
+  function serializeBlockChildren(el){
+    var blocks = [], buf = "";
+    function flush(){
+      var t = buf.replace(/^\n+/,"").replace(/\n+$/,"");
+      if(t.trim() !== "") blocks.push(t);
+      buf = "";
+    }
+    var kids = el.childNodes;
+    for(var i=0;i<kids.length;i++){
+      var n = kids[i];
+      if(n.nodeType === 3){ buf += serializeInlineNode(n, buf); continue; }
+      if(n.nodeType !== 1) continue;
+      if(BLOCK_TAGS[n.tagName]){
+        flush();
+        var b = serializeBlockElement(n);
+        if(b.trim() !== "") blocks.push(b);
+      } else {
+        buf += serializeInlineNode(n, buf);
+      }
+    }
+    flush();
+    return blocks.join("\n\n");
+  }
+
+  function serializeBlockElement(n){
+    var tag = n.tagName;
+    var hm = /^H([1-6])$/.exec(tag);
+    if(hm){
+      var lvl = +hm[1];
+      return "######".slice(0, lvl) + " " + serializeInlineChildren(n).replace(/\s*\n\s*/g," ").trim();
+    }
+    if(tag === "P")  return serializeInlineChildren(n).replace(/^\n+/,"").replace(/\n+$/,"");
+    if(tag === "HR") return "---";
+    if(tag === "PRE") return serializePre(n);
+    if(tag === "BLOCKQUOTE"){
+      var inner = serializeBlockChildren(n);
+      return inner.split("\n").map(function(l){ return l ? "> " + l : ">"; }).join("\n");
+    }
+    if(tag === "UL" || tag === "OL") return serializeList(n);
+    if(tag === "TABLE") return serializeTable(n);
+    if(tag === "DIV"){
+      if(hasBlockChild(n)) return serializeBlockChildren(n);
+      return serializeInlineChildren(n).replace(/^\n+/,"").replace(/\n+$/,"");
+    }
+    // unknown block-ish element: serialize its children
+    var fb = serializeBlockChildren(n);
+    return fb !== "" ? fb : (n.textContent || "");
+  }
+
+  function hasBlockChild(el){
+    for(var c = el.firstElementChild; c; c = c.nextElementSibling){
+      if(BLOCK_TAGS[c.tagName]) return true;
+    }
+    return false;
+  }
+
+  function serializeInlineChildren(el){
+    var out = "";
+    var kids = el.childNodes;
+    for(var i=0;i<kids.length;i++) out += serializeInlineNode(kids[i], out);
+    return out;
+  }
+
+  // `out` is what has been emitted so far in the current inline run; used to
+  // avoid doubling the newline after <br> (renderer emits "<br>\n").
+  function serializeInlineNode(n, out){
+    if(n.nodeType === 3){
+      var s = n.nodeValue.replace(/\u00a0/g, " ");
+      if(out.slice(-1) === "\n" && s.charAt(0) === "\n") s = s.slice(1);
+      return s;
+    }
+    if(n.nodeType !== 1) return "";
+    var tag = n.tagName;
+    switch(tag){
+      case "BR": return "  \n";
+      case "STRONG": case "B": return wrapInline(n, "**");
+      case "EM": case "I":     return wrapInline(n, "*");
+      case "DEL": case "S": case "STRIKE": return wrapInline(n, "~~");
+      case "CODE": return serializeInlineCode(n);
+      case "A": {
+        var href = n.getAttribute("href") || "";
+        var at = n.getAttribute("title");
+        return "[" + serializeInlineChildren(n) + "](" + href + (at ? ' "' + at + '"' : "") + ")";
+      }
+      case "IMG": {
+        var it = n.getAttribute("title");
+        return "![" + (n.getAttribute("alt") || "") + "](" + (n.getAttribute("src") || "") +
+               (it ? ' "' + it + '"' : "") + ")";
+      }
+      case "INPUT":
+        if((n.getAttribute("type") || "").toLowerCase() === "checkbox") return n.checked ? "[x] " : "[ ] ";
+        return "";
+      // <mark> (find hits), <span> (tk-* highlight spans, task wrapper,
+      // WebKit style spans) and anything unknown are transparent.
+      case "MARK": case "SPAN": case "FONT": case "U":
+        return serializeInlineChildren(n);
+      default:
+        if(BLOCK_TAGS[tag]) return "\n" + serializeBlockElement(n) + "\n";
+        return serializeInlineChildren(n);
+    }
+  }
+
+  function wrapInline(n, d){
+    var inner = serializeInlineChildren(n);
+    if(inner.trim() === "") return inner;
+    return d + inner + d;
+  }
+
+  function serializeInlineCode(n){
+    var txt = n.textContent;
+    var max = 0, runs = txt.match(/`+/g) || [];
+    for(var i=0;i<runs.length;i++) if(runs[i].length > max) max = runs[i].length;
+    var fence = new Array(max + 2).join("`");
+    var pad = (max > 0 || /^`|`$/.test(txt)) ? " " : "";
+    return fence + pad + txt + pad + fence;
+  }
+
+  function serializePre(pre){
+    var code = pre.querySelector("code") || pre;
+    var lang = "";
+    var cm = /(?:^|\s)language-(\S+)/.exec(code.className || "");
+    if(cm) lang = cm[1];
+    var txt = code.textContent.replace(/\n$/,"");   // tk-* spans flatten to plain text
+    var fl = 3, runs = txt.match(/`{3,}/g) || [];
+    for(var i=0;i<runs.length;i++) if(runs[i].length >= fl) fl = runs[i].length + 1;
+    var fence = new Array(fl + 1).join("`");
+    return fence + lang + "\n" + txt + "\n" + fence;
+  }
+
+  function serializeList(list){
+    var ordered = list.tagName === "OL";
+    var idx = parseInt(list.getAttribute("start") || "1", 10) || 1;
+    var lines = [];
+    for(var c = list.firstElementChild; c; c = c.nextElementSibling){
+      if(c.tagName !== "LI") continue;
+      lines.push(serializeListItem(c, ordered ? (idx++) + ". " : "- "));
+    }
+    return lines.join("\n");
+  }
+
+  function serializeListItem(li, marker){
+    var head = "", subs = [], taskPrefix = "";
+    function eat(nodes, skipCheckbox){
+      for(var i=0;i<nodes.length;i++){
+        var n = nodes[i];
+        if(n.nodeType === 1){
+          if(skipCheckbox && n.tagName === "INPUT") continue;
+          if(n.tagName === "UL" || n.tagName === "OL"){ subs.push(serializeList(n)); continue; }
+          if(n.tagName === "SPAN" && /(^|\s)task-list-item(\s|$)/.test(n.className || "")){
+            var cb = n.querySelector('input[type="checkbox"]');
+            if(cb) taskPrefix = cb.checked ? "[x] " : "[ ] ";
+            eat(n.childNodes, true);
+            continue;
+          }
+          if(BLOCK_TAGS[n.tagName]){ subs.push(serializeBlockElement(n)); continue; }
+        }
+        head += serializeInlineNode(n, head);
+      }
+    }
+    eat(li.childNodes, false);
+    var item = marker + taskPrefix + head.replace(/^\s+/,"").replace(/\s+$/,"");
+    if(subs.length){
+      var sub = subs.join("\n").split("\n").map(function(l){ return l ? "  " + l : l; }).join("\n");
+      item += "\n" + sub;
+    }
+    return item;
+  }
+
+  function serializeTable(tbl){
+    var trs = tbl.querySelectorAll("tr");
+    if(!trs.length) return tbl.textContent || "";
+    function cellText(c){
+      return serializeInlineChildren(c).replace(/\n+/g," ").trim().replace(/\|/g,"\\|");
+    }
+    var header = [], aligns = [];
+    var hc = trs[0].children;
+    for(var i=0;i<hc.length;i++){
+      header.push(cellText(hc[i]));
+      var a = (hc[i].style && hc[i].style.textAlign) || "";
+      aligns.push(a === "center" ? ":---:" : a === "right" ? "---:" : a === "left" ? ":---" : "---");
+    }
+    var lines = ["| " + header.join(" | ") + " |", "| " + aligns.join(" | ") + " |"];
+    for(var r=1;r<trs.length;r++){
+      var cells = [], tc = trs[r].children;
+      for(var k=0;k<tc.length;k++) cells.push(cellText(tc[k]));
+      lines.push("| " + cells.join(" | ") + " |");
+    }
+    return lines.join("\n");
+  }
+
   /* ---------- editing ---------- */
   var rawMD = "", dirty = false;
+  var renderedFor = "";   // the markdown string the current #content DOM was rendered from / serialized to
   var editor = document.getElementById("editor");
+  var content = document.getElementById("content");
+  var editwrap = document.getElementById("editwrap");
+  var gutter = document.getElementById("gutter");
+
+  function editVisible(){ return editwrap.style.display === "flex"; }
 
   function notifyDirty(){
     try{ window.webkit.messageHandlers.dirty.postMessage(dirty); }catch(e){}
@@ -353,15 +576,83 @@
     editor.style.height = "auto";
     editor.style.height = Math.max(editor.scrollHeight + 2, window.innerHeight * 0.7) + "px";
   }
-  editor.addEventListener("input", function(){ setDirty(editor.value !== rawMD); autosize(); });
+
+  var gutterLines = -1;
+  function updateGutter(){
+    var n = editor.value.split("\n").length;
+    if(n === gutterLines) return;
+    gutterLines = n;
+    var buf = new Array(n);
+    for(var i=0;i<n;i++) buf[i] = i + 1;
+    gutter.textContent = buf.join("\n");
+  }
+
+  var statsEl = document.getElementById("stats");
+  function updateStats(text){
+    var norm = text.replace(/\r\n?/g, "\n");
+    var arr = norm.split("\n");
+    if(arr.length && arr[arr.length-1] === "") arr.pop(); // ignore trailing newline
+    var lineCount = arr.length;
+    var words = (norm.match(/\S+/g) || []).length;
+    statsEl.textContent = lineCount.toLocaleString() + (lineCount === 1 ? " line" : " lines") +
+                          " · " + words.toLocaleString() + (words === 1 ? " word" : " words");
+    statsEl.style.display = "block";
+  }
+
+  editor.addEventListener("input", function(){
+    setDirty(editor.value !== rawMD); autosize(); updateGutter(); updateStats(editor.value);
+  });
   editor.addEventListener("keydown", function(e){
     if(e.key === "Tab"){
       e.preventDefault();
       editor.setRangeText("  ", editor.selectionStart, editor.selectionEnd, "end");
-      setDirty(editor.value !== rawMD); autosize();
+      setDirty(editor.value !== rawMD); autosize(); updateGutter(); updateStats(editor.value);
     }
   });
-  window.addEventListener("resize", function(){ if(editor.style.display === "block") autosize(); });
+  window.addEventListener("resize", function(){ if(editVisible()) autosize(); });
+
+  // Rendered-view editing: on every actual edit, reverse-convert the DOM to
+  // markdown and mirror it into the (hidden) textarea, which remains the
+  // source of truth for MDGetContent()/saving. The rendered DOM itself is
+  // never re-rendered here, so the caret and native undo stay intact.
+  function syncFromRendered(){
+    var md = domToMarkdown(content);
+    editor.value = md;
+    renderedFor = md;
+    setDirty(editor.value !== rawMD);
+    updateGutter();
+    updateStats(md);
+  }
+  content.addEventListener("input", syncFromRendered);
+
+  // Task-list checkboxes: WebKit's activation behavior inside contenteditable
+  // is unreliable (and a canceled click reverts .checked after dispatch), so
+  // we own the toggle: the "checked" attribute tracks the authoritative state,
+  // and we apply the flip after the click dispatch has fully completed.
+  function isCheckbox(t){
+    return t && t.nodeType === 1 && t.tagName === "INPUT" && t.type === "checkbox";
+  }
+  content.addEventListener("mousedown", function(e){
+    if(isCheckbox(e.target)) e.preventDefault();   // no caret placement on the widget
+  });
+  content.addEventListener("click", function(e){
+    var t = e.target;
+    var link = t && t.closest ? t.closest("a") : null;
+    if(link && e.metaKey){
+      e.preventDefault();
+      e.stopPropagation();
+      try{ window.webkit.messageHandlers.openLink.postMessage(link.getAttribute("href") || ""); }catch(err){}
+      return;
+    }
+    if(!isCheckbox(t)) return;
+    e.preventDefault();
+    var newVal = !t.hasAttribute("checked");
+    setTimeout(function(){                          // run after any activation revert
+      t.checked = newVal;
+      if(newVal) t.setAttribute("checked",""); else t.removeAttribute("checked");
+      syncFromRendered();
+    }, 0);
+  });
 
   window.MDGetContent = function(){ return btoa(unescape(encodeURIComponent(editor.value))); };
   window.MDIsDirty = function(){ return dirty; };
@@ -370,9 +661,6 @@
   /* ---------- find in page ---------- */
   var findQuery = "", findHits = [], findIndex = -1, findOpen = false;
 
-  function activeContainer(){
-    return document.getElementById("content");
-  }
   function clearMarks(){
     var marks = document.querySelectorAll("mark.find-hit");
     for(var i=0;i<marks.length;i++){
@@ -384,11 +672,27 @@
   }
   function setCurrent(i){
     if(!findHits.length) return;
-    if(findIndex>=0 && findHits[findIndex]) findHits[findIndex].classList.remove("current");
+    if(!editVisible() && findIndex>=0 && findHits[findIndex]) findHits[findIndex].classList.remove("current");
     findIndex = ((i % findHits.length) + findHits.length) % findHits.length;
-    var el = findHits[findIndex];
-    el.classList.add("current");
-    el.scrollIntoView({block:"center", inline:"nearest"});
+    if(editVisible()){
+      var hit = findHits[findIndex];
+      editor.setSelectionRange(hit.start, hit.end);
+
+      // The textarea grows with its contents, so reveal the selected source
+      // line by scrolling the document rather than the textarea itself.
+      var before = editor.value.slice(0, hit.start);
+      var line = (before.match(/\n/g) || []).length;
+      var style = window.getComputedStyle(editor);
+      var lineHeight = parseFloat(style.lineHeight) || 19.72;
+      var paddingTop = parseFloat(style.paddingTop) || 0;
+      var editorTop = editor.getBoundingClientRect().top + window.scrollY;
+      var targetY = editorTop + paddingTop + line * lineHeight - window.innerHeight / 2;
+      window.scrollTo(0, Math.max(0, targetY));
+    } else {
+      var el = findHits[findIndex];
+      el.classList.add("current");
+      el.scrollIntoView({block:"center", inline:"nearest"});
+    }
     document.getElementById("findcount").textContent = (findIndex+1)+"/"+findHits.length;
   }
   function doSearch(q){
@@ -396,8 +700,18 @@
     findQuery = q;
     var countEl = document.getElementById("findcount");
     if(!q){ countEl.textContent = ""; return; }
-    var container = activeContainer();
     var re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+    if(editVisible()){
+      var text = editor.value, match;
+      while((match = re.exec(text)) !== null){
+        findHits.push({start:match.index, end:match.index + match[0].length});
+        if(match[0] === "") re.lastIndex++;
+      }
+      if(findHits.length){ findIndex = -1; setCurrent(0); }
+      else { countEl.textContent = "0/0"; }
+      return;
+    }
+    var container = content;
     var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
       acceptNode: function(n){ return (n.nodeValue && n.nodeValue.length) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT; }
     });
@@ -440,6 +754,7 @@
     findOpen = false;
     clearMarks();
     document.getElementById("findcount").textContent = "";
+    if(editVisible()) editor.focus({preventScroll:true});
   };
 
   (function wireFind(){
@@ -458,38 +773,41 @@
   window.MDRender = function(b64){
     var md = decodeURIComponent(escape(atob(b64)));
     rawMD = md;
-    // keep unsaved edits if the file changed underneath us; avoid resetting the
-    // caret when the incoming content matches the editor (e.g. right after save)
-    if(!dirty && editor.value !== md) editor.value = md;
     document.getElementById("empty").style.display = "none";
-    document.getElementById("content").innerHTML = parseBlocks(md);
-    // line + word count
-    var norm = md.replace(/\r\n?/g, "\n");
-    var arr = norm.split("\n");
-    if(arr.length && arr[arr.length-1] === "") arr.pop(); // ignore trailing newline
-    var lineCount = arr.length;
-    var words = (norm.match(/\S+/g) || []).length;
-    var stats = document.getElementById("stats");
-    stats.textContent = lineCount.toLocaleString() + (lineCount === 1 ? " line" : " lines") +
-                        " · " + words.toLocaleString() + (words === 1 ? " word" : " words");
-    stats.style.display = "block";
+    // if the file caught up with our unsaved edits (e.g. edited externally to
+    // the same text), we are clean again
+    if(dirty && editor.value === md) setDirty(false);
+    if(!dirty){
+      // keep the caret stable when the incoming content matches the editor
+      // (e.g. right after save)
+      if(editor.value !== md) editor.value = md;
+      content.innerHTML = parseBlocks(md);
+      renderedFor = md;
+      if(editVisible()) autosize();
+    }
+    // when dirty: keep the current DOM and editor content — unsaved edits
+    // (rendered-view or edit-view) must not be clobbered by a live reload
+    updateGutter();
+    updateStats(editor.value);
     if(findOpen && findQuery) doSearch(findQuery); // keep highlights after live reload
   };
   window.MDSetMode = function(mode){
-    var content = document.getElementById("content");
     if(mode === "edit"){
       document.getElementById("empty").style.display = "none";
       content.style.display = "none";
-      var wasHidden = editor.style.display !== "block";
-      editor.style.display = "block";
+      var wasHidden = !editVisible();
+      editwrap.style.display = "flex";
       autosize();
+      updateGutter();
       if(wasHidden) editor.focus();
     } else {
-      if(editor.style.display === "block" && dirty){
-        // preview unsaved edits in the rendered view
+      if(editor.value !== renderedFor){
+        // editor holds newer markdown than what the rendered DOM shows
+        // (unsaved edit-view changes) — re-render so both views agree
         content.innerHTML = parseBlocks(editor.value);
+        renderedFor = editor.value;
       }
-      editor.style.display = "none";
+      editwrap.style.display = "none";
       content.style.display = "block";
     }
     if(findOpen && findQuery) doSearch(findQuery); // re-search the now-visible view

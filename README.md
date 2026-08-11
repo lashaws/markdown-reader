@@ -13,13 +13,15 @@ it in a clean, GitHub-style view.
   blockquotes, fenced code, links, images
 - **Rendered / Edit toggle** (toolbar, or ⌘1 / ⌘2) — Edit shows the raw Markdown
   and lets you change the document in place
+- **Command-click links** in the rendered view to open web, email, and local-file
+  destinations with their default app
 - **Save with ⌘S** — saves back to the file (or prompts for a location for new
   documents); unsaved changes are flagged in the window and prompt before closing
 - **Automatic dark / light mode** — follows the system appearance
 - **Live reload** — the view updates the instant you save the file (scroll
   position preserved)
-- **Find in page** (⌘F) — live match highlighting, next/previous (Enter / ⇧Enter),
-  match counter, Esc to close
+- **Find in page** (⌘F) in both Rendered and Edit views — live match highlighting,
+  next/previous (Enter / ⇧Enter), match counter, Esc to close
 - **Line & word count** badge
 
 ## Build

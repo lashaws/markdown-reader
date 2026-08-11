@@ -30,6 +30,7 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
 
         webView.navigationDelegate = self
         webView.configuration.userContentController.add(self, name: "dirty")
+        webView.configuration.userContentController.add(self, name: "openLink")
         window.delegate = self
         window.contentView = webView
         setupToolbar()
@@ -147,7 +148,32 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
         if message.name == "dirty", let d = message.body as? Bool {
             isDirty = d
             window?.isDocumentEdited = d
+        } else if message.name == "openLink", let href = message.body as? String {
+            openLink(href)
         }
+    }
+
+    private func openLink(_ href: String) {
+        guard !href.isEmpty else { return }
+
+        let target: URL?
+        if let absolute = URL(string: href), absolute.scheme != nil {
+            target = absolute
+        } else if let source = fileURL {
+            let directory = source.deletingLastPathComponent()
+                .appendingPathComponent("", isDirectory: true)
+            target = URL(string: href, relativeTo: directory)?.absoluteURL
+        } else {
+            target = nil
+        }
+
+        guard let url = target,
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https", "mailto", "file"].contains(scheme) else {
+            NSSound.beep()
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     func save(completion: ((Bool) -> Void)? = nil) {
