@@ -24,7 +24,21 @@ it in a clean, GitHub-style view.
   next/previous (Enter / ⇧Enter), match counter, Esc to close
 - **Line & word count** badge
 
-## Build
+## Download
+
+Grab `MarkdownReader-1.0-macOS-universal.zip` from
+[Releases](https://github.com/lashaws/markdown-reader/releases), unzip it, and drag
+**Markdown Reader.app** to `/Applications`. Universal binary — Apple Silicon and Intel,
+macOS 11+.
+
+The build is **unsigned**, so Gatekeeper blocks the first launch. Right-click the app →
+**Open**, or:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Markdown Reader.app"
+```
+
+## Build from source
 
 Requires the Xcode Command Line Tools (`xcode-select --install`). No full Xcode needed.
 
@@ -33,7 +47,8 @@ Requires the Xcode Command Line Tools (`xcode-select --install`). No full Xcode 
 ```
 
 This compiles `Sources/main.swift`, assembles `Markdown Reader.app`, ad-hoc signs it,
-and registers it with LaunchServices.
+and registers it with LaunchServices. Pass `--universal` to build a fat arm64 + x86_64
+binary (what the releases ship).
 
 ## Run
 
