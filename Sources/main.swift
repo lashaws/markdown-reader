@@ -31,6 +31,7 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
         webView.navigationDelegate = self
         webView.configuration.userContentController.add(self, name: "dirty")
         webView.configuration.userContentController.add(self, name: "openLink")
+        webView.configuration.userContentController.add(self, name: "copyText")
         window.delegate = self
         window.contentView = webView
         setupToolbar()
@@ -150,6 +151,10 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
             window?.isDocumentEdited = d
         } else if message.name == "openLink", let href = message.body as? String {
             openLink(href)
+        } else if message.name == "copyText", let text = message.body as? String {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
         }
     }
 

@@ -47,6 +47,21 @@
   p code,li code,td code{background:var(--code-bg);padding:.2em .4em;border-radius:6px;}
   pre{background:var(--code-bg);color:var(--code-fg);padding:14px 16px;border-radius:8px;overflow:auto;margin:0 0 1em;line-height:1.45;}
   pre code{background:none;padding:0;font-size:.85em;display:block;}
+  .codeblock{position:relative;margin:0 0 1em;}
+  .codeblock > pre{margin:0;}
+  .copy-btn{position:absolute;top:8px;right:8px;width:28px;height:28px;padding:0;
+    display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--muted);
+    cursor:pointer;opacity:0;transition:opacity .15s,color .15s;
+    -webkit-user-select:none;user-select:none;}
+  .codeblock:hover .copy-btn,.copy-btn:focus-visible,.copy-btn.copied{opacity:1;}
+  .copy-btn:hover{color:var(--fg);}
+  .copy-btn svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.6;
+    stroke-linecap:round;stroke-linejoin:round;pointer-events:none;}
+  .copy-btn .ic-check{display:none;}
+  .copy-btn.copied{color:var(--tk-attr);border-color:var(--tk-attr);}
+  .copy-btn.copied .ic-copy{display:none;}
+  .copy-btn.copied .ic-check{display:block;}
   table{border-collapse:collapse;margin:0 0 1em;display:block;overflow:auto;width:max-content;max-width:100%;}
   th,td{border:1px solid var(--border);padding:6px 13px;}
   tr:nth-child(2n){background:var(--table-alt);}
@@ -121,6 +136,10 @@
   /* ---------- helpers ---------- */
   function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
   function escAttr(s){return esc(s).replace(/"/g,"&quot;");}
+  var COPY_BTN = '<button class="copy-btn" type="button" contenteditable="false" tabindex="-1" title="Copy code" aria-label="Copy code">' +
+    '<svg class="ic-copy" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></svg>' +
+    '<svg class="ic-check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg>' +
+    '</button>';
 
   /* ---------- lightweight generic syntax highlighter ---------- */
   var KEYWORDS = new Set(("abstract and as assert async await begin bool boolean break byte case catch char "+
@@ -211,7 +230,7 @@
         i++;
         while(i < lines.length && !closeRe.test(lines[i])){ buf.push(lines[i]); i++; }
         i++;
-        out.push('<pre><code'+(lang?' class="language-'+escAttr(lang)+'"':'')+'>'+highlight(buf.join("\n"))+'</code></pre>');
+        out.push('<div class="codeblock">'+COPY_BTN+'<pre><code'+(lang?' class="language-'+escAttr(lang)+'"':'')+'>'+highlight(buf.join("\n"))+'</code></pre></div>');
         continue;
       }
 
@@ -460,6 +479,7 @@
       case "INPUT":
         if((n.getAttribute("type") || "").toLowerCase() === "checkbox") return n.checked ? "[x] " : "[ ] ";
         return "";
+      case "BUTTON": return "";   // copy-button chrome, not document content
       // <mark> (find hits), <span> (tk-* highlight spans, task wrapper,
       // WebKit style spans) and anything unknown are transparent.
       case "MARK": case "SPAN": case "FONT": case "U":
@@ -632,8 +652,34 @@
   function isCheckbox(t){
     return t && t.nodeType === 1 && t.tagName === "INPUT" && t.type === "checkbox";
   }
+  function copyButtonOf(t){
+    return t && t.closest ? t.closest(".copy-btn") : null;
+  }
+  function copyToClipboard(text){
+    try{
+      window.webkit.messageHandlers.copyText.postMessage(text);
+      return;
+    }catch(e){}
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).catch(function(){});
+    }
+  }
+  var copiedTimers = new WeakMap();
+  function copyCodeBlock(btn){
+    var block = btn.closest(".codeblock");
+    var code = block ? (block.querySelector("pre code") || block.querySelector("pre")) : null;
+    if(!code) return;
+    copyToClipboard(code.textContent.replace(/\n$/,""));
+    btn.classList.add("copied");
+    btn.title = "Copied";
+    clearTimeout(copiedTimers.get(btn));
+    copiedTimers.set(btn, setTimeout(function(){
+      btn.classList.remove("copied");
+      btn.title = "Copy code";
+    }, 1400));
+  }
   content.addEventListener("mousedown", function(e){
-    if(isCheckbox(e.target)) e.preventDefault();   // no caret placement on the widget
+    if(isCheckbox(e.target) || copyButtonOf(e.target)) e.preventDefault();   // no caret placement on the widget
   });
   content.addEventListener("click", function(e){
     var t = e.target;
@@ -642,6 +688,13 @@
       e.preventDefault();
       e.stopPropagation();
       try{ window.webkit.messageHandlers.openLink.postMessage(link.getAttribute("href") || ""); }catch(err){}
+      return;
+    }
+    var cbtn = copyButtonOf(t);
+    if(cbtn){
+      e.preventDefault();
+      e.stopPropagation();
+      copyCodeBlock(cbtn);
       return;
     }
     if(!isCheckbox(t)) return;

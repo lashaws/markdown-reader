@@ -13,6 +13,8 @@ it in a clean, GitHub-style view.
   blockquotes, fenced code, links, images
 - **Rendered / Edit toggle** (toolbar, or ⌘1 / ⌘2) — Edit shows the raw Markdown
   and lets you change the document in place
+- **Copy button on code blocks** — hover a fenced code block and click the
+  clipboard icon in its corner to copy the code
 - **Command-click links** in the rendered view to open web, email, and local-file
   destinations with their default app
 - **Save with ⌘S** — saves back to the file (or prompts for a location for new
