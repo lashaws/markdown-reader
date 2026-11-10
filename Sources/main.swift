@@ -8,8 +8,23 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
     let webView: WKWebView
     var fileURL: URL?
     private(set) var isDirty = false
-    private var mode: String = "rendered"
-    private static let modes = ["rendered", "edit"]
+    /// New, untitled documents open side by side so pasted text has an editor and a preview.
+    private var mode: String = "split"
+    private static let modes = ["rendered", "edit", "split"]
+    private static let modeKey = "viewMode"
+    private static let liveKey = "livePreview"
+    /// The view a file opens in: whichever the user last picked.
+    static var preferredMode: String {
+        let m = UserDefaults.standard.string(forKey: modeKey) ?? "rendered"
+        return modes.contains(m) ? m : "rendered"
+    }
+    static var livePreview: Bool {
+        get { UserDefaults.standard.bool(forKey: liveKey) }
+        set { UserDefaults.standard.set(newValue, forKey: liveKey) }
+    }
+    var onClose: ((ViewerWindowController) -> Void)?
+    /// An untitled window nobody has typed into; opening a file reuses it.
+    var isPristineUntitled: Bool { fileURL == nil && !isDirty }
     private var pageReady = false
     private var pendingB64: String?
     private var watchSource: DispatchSourceFileSystemObject?
@@ -26,6 +41,7 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
             backing: .buffered, defer: false)
         window.center()
         window.setFrameAutosaveName("MarkdownReaderWindow")
+        window.title = "Untitled"
         super.init(window: window)
 
         webView.navigationDelegate = self
@@ -35,6 +51,7 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
         window.delegate = self
         window.contentView = webView
         setupToolbar()
+        widenForSplit()
 
         let viewer = Bundle.main.url(forResource: "viewer", withExtension: "html")!
         webView.loadFileURL(viewer, allowingReadAccessTo: viewer.deletingLastPathComponent())
@@ -61,10 +78,10 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
     func toolbar(_ t: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         guard id.rawValue == "viewMode" else { return nil }
-        let seg = NSSegmentedControl(labels: ["Rendered", "Edit"],
+        let seg = NSSegmentedControl(labels: ["Rendered", "Edit", "Side by Side"],
                                      trackingMode: .selectOne,
                                      target: self, action: #selector(segChanged(_:)))
-        seg.selectedSegment = 0
+        seg.selectedSegment = Self.modes.firstIndex(of: mode) ?? 0
         segmented = seg
         let item = NSToolbarItem(itemIdentifier: id)
         item.view = seg
@@ -73,13 +90,36 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
     }
 
     @objc private func segChanged(_ sender: NSSegmentedControl) {
-        setMode(Self.modes[sender.selectedSegment])
+        setMode(Self.modes[sender.selectedSegment], remember: true)
     }
 
-    func setMode(_ m: String) {
+    /// `remember` records the choice as the view new files open in.
+    func setMode(_ m: String, remember: Bool = false) {
+        guard Self.modes.contains(m) else { return }
         mode = m
+        if remember { UserDefaults.standard.set(m, forKey: Self.modeKey) }
         segmented?.selectedSegment = Self.modes.firstIndex(of: m) ?? 0
-        webView.evaluateJavaScript("window.MDSetMode('\(m)')", completionHandler: nil)
+        widenForSplit()
+        if pageReady {
+            webView.evaluateJavaScript("window.MDSetMode('\(m)')", completionHandler: nil)
+        }
+    }
+
+    func applyLivePreview() {
+        guard pageReady else { return }
+        webView.evaluateJavaScript("window.MDSetLivePreview(\(Self.livePreview))", completionHandler: nil)
+    }
+
+    /// Two panes need room: grow a narrow window when it shows side by side.
+    private func widenForSplit() {
+        guard mode == "split", let w = window, w.frame.width < 1100,
+              let screen = w.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        var f = w.frame
+        let width = min(1280, visible.width)
+        f.origin.x = max(visible.minX, min(f.midX - width / 2, visible.maxX - width))
+        f.size.width = width
+        w.setFrame(f, display: true, animate: w.isVisible)
     }
 
     func findInPage() { webView.evaluateJavaScript("window.MDFind()", completionHandler: nil) }
@@ -89,6 +129,7 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
     // MARK: Loading a file
 
     func open(_ url: URL) {
+        setMode(Self.preferredMode)
         fileURL = url
         window?.title = url.lastPathComponent
         window?.representedURL = url
@@ -123,11 +164,12 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         pageReady = true
+        applyLivePreview()
         if let b64 = pendingB64 {
             webView.evaluateJavaScript("window.MDRender('\(b64)')", completionHandler: nil)
-            webView.evaluateJavaScript("window.MDSetMode('\(mode)')", completionHandler: nil)
             pendingB64 = nil
         }
+        webView.evaluateJavaScript("window.MDSetMode('\(mode)')", completionHandler: nil)
     }
 
     // open external links in the default browser, keep local nav internal
@@ -181,16 +223,18 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
         NSWorkspace.shared.open(url)
     }
 
-    func save(completion: ((Bool) -> Void)? = nil) {
+    /// Writes the buffer to disk. Nothing else in the app writes files: there is no autosave.
+    /// `askForLocation` forces the save panel (Save As…); untitled documents always get it.
+    func save(askForLocation: Bool = false, completion: ((Bool) -> Void)? = nil) {
         webView.evaluateJavaScript("window.MDGetContent()") { [weak self] result, _ in
             guard let self = self, let b64 = result as? String,
                   let data = Data(base64Encoded: b64) else { completion?(false); return }
-            if let url = self.fileURL {
+            if let url = self.fileURL, !askForLocation {
                 self.write(data, to: url, completion: completion)
             } else {
                 let panel = NSSavePanel()
                 panel.allowedFileTypes = ["md", "markdown", "txt"]
-                panel.nameFieldStringValue = "Untitled.md"
+                panel.nameFieldStringValue = self.fileURL?.lastPathComponent ?? "Untitled.md"
                 panel.beginSheetModal(for: self.window!) { resp in
                     guard resp == .OK, let url = panel.url else { completion?(false); return }
                     self.write(data, to: url, completion: completion)
@@ -235,6 +279,14 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
         default:
             return false
         }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        stopWatching()
+        // the content controller retains its handlers (and so this controller)
+        let ucc = webView.configuration.userContentController
+        for name in ["dirty", "openLink", "copyText"] { ucc.removeScriptMessageHandler(forName: name) }
+        onClose?(self)
     }
 
     // MARK: Live reload (file watching)
@@ -282,17 +334,27 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var controllers: [ViewerWindowController] = []
+    private var livePreviewItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         buildMenu()
         if controllers.isEmpty {
-            // launched with no document: show an empty window inviting a file
-            let c = ViewerWindowController()
-            controllers.append(c)
-            c.showWindow(nil)
-            c.window?.makeKeyAndOrderFront(nil)
+            // launched with no document: open an untitled one, ready for typing or pasting
+            newDocument(nil)
         }
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func makeController() -> ViewerWindowController {
+        let c = ViewerWindowController()
+        c.onClose = { [weak self] closed in self?.controllers.removeAll { $0 === closed } }
+        // offset from the current window instead of stacking exactly on top of it
+        if let key = NSApp.keyWindow ?? controllers.last?.window, let w = c.window {
+            let topLeft = NSPoint(x: key.frame.minX, y: key.frame.maxY)
+            w.setFrameTopLeftPoint(w.cascadeTopLeft(from: topLeft))
+        }
+        controllers.append(c)
+        return c
     }
 
     func application(_ app: NSApplication, open urls: [URL]) {
@@ -307,7 +369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             if let c = controllers.last { c.showWindow(nil) }
-            else { openDocument(nil) }
+            else { newDocument(nil) }
         }
         return true
     }
@@ -328,8 +390,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func present(_ url: URL) {
-        // reuse an empty placeholder window if present
-        if let empty = controllers.first(where: { $0.fileURL == nil }) {
+        // reuse an untouched untitled window if present
+        if let empty = controllers.first(where: { $0.isPristineUntitled }) {
             empty.open(url)
             empty.showWindow(nil); empty.window?.makeKeyAndOrderFront(nil)
             return
@@ -338,8 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             existing.showWindow(nil); existing.window?.makeKeyAndOrderFront(nil)
             return
         }
-        let c = ViewerWindowController()
-        controllers.append(c)
+        let c = makeController()
         c.open(url)
         c.showWindow(nil); c.window?.makeKeyAndOrderFront(nil)
     }
@@ -353,9 +414,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if panel.runModal() == .OK { for u in panel.urls { present(u) } }
     }
 
+    @objc func newDocument(_ sender: Any?) {
+        let c = makeController()
+        c.showWindow(nil)
+        c.window?.makeKeyAndOrderFront(nil)
+    }
+
     @objc func saveDocument(_ s: Any?) { keyVC()?.save() }
-    @objc func showRendered(_ s: Any?) { keyVC()?.setMode("rendered") }
-    @objc func showEditor(_ s: Any?)   { keyVC()?.setMode("edit") }
+    @objc func saveDocumentAs(_ s: Any?) { keyVC()?.save(askForLocation: true) }
+    @objc func showRendered(_ s: Any?) { keyVC()?.setMode("rendered", remember: true) }
+    @objc func showEditor(_ s: Any?)   { keyVC()?.setMode("edit", remember: true) }
+    @objc func showSplit(_ s: Any?)    { keyVC()?.setMode("split", remember: true) }
+    @objc func toggleLivePreview(_ s: Any?) {
+        ViewerWindowController.livePreview.toggle()
+        livePreviewItem?.state = ViewerWindowController.livePreview ? .on : .off
+        for c in controllers { c.applyLivePreview() }
+    }
     @objc func performFindAction(_ s: Any?) { keyVC()?.findInPage() }
     @objc func findNextAction(_ s: Any?)    { keyVC()?.findNext() }
     @objc func findPrevAction(_ s: Any?)    { keyVC()?.findPrev() }
@@ -379,8 +453,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // File menu
         let fileItem = NSMenuItem(); main.addItem(fileItem)
         let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "New", action: #selector(newDocument(_:)), keyEquivalent: "n")
         fileMenu.addItem(withTitle: "Open…", action: #selector(openDocument(_:)), keyEquivalent: "o")
+        fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Save", action: #selector(saveDocument(_:)), keyEquivalent: "s")
+        let saveAs = fileMenu.addItem(withTitle: "Save As…", action: #selector(saveDocumentAs(_:)), keyEquivalent: "s")
+        saveAs.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(.separator())
         let close = fileMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         close.keyEquivalentModifierMask = [.command]
@@ -409,6 +487,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(withTitle: "Rendered View", action: #selector(showRendered(_:)), keyEquivalent: "1")
         viewMenu.addItem(withTitle: "Edit Mode", action: #selector(showEditor(_:)), keyEquivalent: "2")
+        viewMenu.addItem(withTitle: "Side by Side", action: #selector(showSplit(_:)), keyEquivalent: "3")
+        viewMenu.addItem(.separator())
+        let live = viewMenu.addItem(withTitle: "Live Preview", action: #selector(toggleLivePreview(_:)), keyEquivalent: "l")
+        live.keyEquivalentModifierMask = [.command, .shift]
+        live.state = ViewerWindowController.livePreview ? .on : .off
+        livePreviewItem = live
         viewItem.submenu = viewMenu
 
         // Window menu

@@ -11,14 +11,23 @@ it in a clean, GitHub-style view.
 
 - **Clean rendered view by default** — headings, lists, tables, task lists,
   blockquotes, fenced code, links, images
-- **Rendered / Edit toggle** (toolbar, or ⌘1 / ⌘2) — Edit shows the raw Markdown
-  and lets you change the document in place
+- **Rendered / Edit / Side by Side** (toolbar, or ⌘1 / ⌘2 / ⌘3) — Edit shows the
+  raw Markdown and lets you change the document in place; Side by Side puts the
+  editor on the left and a rendered preview on the right, scrolling together. The
+  app remembers the view you last picked.
+- **Preview updates on save** — like a Sublime preview, the side-by-side preview
+  shows the last saved version and refreshes when you press ⌘S. Turn on
+  **View → Live Preview** (⇧⌘L) to have it follow your typing instead.
+- **New documents** (⌘N) — launching the app opens an untitled document side by
+  side, so you can paste or type Markdown straight away without opening a file.
+  Save with ⌘S (or Save As… with ⇧⌘S) to pick where it goes.
 - **Copy button on code blocks** — hover a fenced code block and click the
   clipboard icon in its corner to copy the code
 - **Command-click links** in the rendered view to open web, email, and local-file
   destinations with their default app
 - **Save with ⌘S** — saves back to the file (or prompts for a location for new
-  documents); unsaved changes are flagged in the window and prompt before closing
+  documents); unsaved changes are flagged in the window and prompt before closing.
+  Nothing is ever written to disk until you save: there is no autosave
 - **Automatic dark / light mode** — follows the system appearance
 - **Live reload** — the view updates the instant you save the file (scroll
   position preserved)

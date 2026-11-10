@@ -86,7 +86,22 @@
   .tk-number{color:var(--tk-number);}
   .tk-func{color:var(--tk-func);}
   .tk-attr{color:var(--tk-attr);}
-  #empty{color:var(--muted);text-align:center;margin-top:30vh;font-size:1.1em;}
+  #empty{color:var(--muted);text-align:center;margin-top:30vh;font-size:1.1em;line-height:1.8;}
+  /* side-by-side: editor on the left, read-only preview on the right */
+  #previewpane{display:none;position:relative;}
+  #preview{max-width:880px;margin:0 auto;word-wrap:break-word;}
+  #preview > *:first-child{margin-top:0;}
+  #preview .pv-empty{color:var(--muted);text-align:center;margin-top:30vh;}
+  #pvnote{display:none;position:sticky;top:0;z-index:5;margin:-28px -36px 20px;padding:6px 12px;
+    font-size:12px;color:var(--muted);text-align:center;background:var(--code-bg);
+    border-bottom:1px solid var(--border);-webkit-user-select:none;user-select:none;}
+  #pvnote.show{display:block;}
+  body.split{overflow:hidden;}
+  body.split #wrap{max-width:none;margin:0;padding:0;display:flex;height:100vh;}
+  body.split #main{flex:1 1 50%;min-width:0;overflow:auto;}
+  body.split #editwrap{border-radius:0;min-height:100%;}
+  body.split #previewpane{display:block;flex:1 1 50%;min-width:0;overflow:auto;
+    border-left:1px solid var(--border);padding:28px 36px 120px;}
   /* find bar */
   #findbar{position:fixed;top:12px;right:18px;display:none;align-items:center;gap:4px;
     background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:6px 8px;
@@ -115,12 +130,18 @@
 </head>
 <body>
 <div id="wrap">
-  <article id="content" contenteditable="true" spellcheck="false"></article>
-  <div id="editwrap">
-    <div id="gutter" aria-hidden="true"></div>
-    <textarea id="editor" wrap="off" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+  <div id="main">
+    <article id="content" contenteditable="true" spellcheck="false"></article>
+    <div id="editwrap">
+      <div id="gutter" aria-hidden="true"></div>
+      <textarea id="editor" wrap="off" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+    </div>
+    <div id="empty">Empty document.<br>Paste or type Markdown in Edit (&#8984;2) or Side by Side (&#8984;3),<br>or open a file (&#8984;O).</div>
   </div>
-  <div id="empty">Open a <code>.md</code> file to read it.</div>
+  <div id="previewpane">
+    <div id="pvnote">Unsaved changes &mdash; save (&#8984;S) to update the preview</div>
+    <article id="preview"></article>
+  </div>
 </div>
 <div id="findbar">
   <input id="findinput" type="text" placeholder="Find" autocomplete="off" spellcheck="false">
@@ -585,17 +606,90 @@
   var content = document.getElementById("content");
   var editwrap = document.getElementById("editwrap");
   var gutter = document.getElementById("gutter");
+  var mainEl = document.getElementById("main");
+  var pane = document.getElementById("previewpane");
+  var preview = document.getElementById("preview");
+  var pvnote = document.getElementById("pvnote");
+  var emptyEl = document.getElementById("empty");
+  var mode = "rendered";        // "rendered" | "edit" | "split"
+  var livePreview = false;      // split preview follows the buffer instead of the last save
+  var previewFor = null;        // the markdown string #preview was last rendered from
 
   function editVisible(){ return editwrap.style.display === "flex"; }
+  // the element that scrolls the editor / rendered view
+  function scroller(){ return mode === "split" ? mainEl : (document.scrollingElement || document.documentElement); }
+  function updateEmpty(){ emptyEl.style.display = (mode === "rendered" && editor.value === "") ? "block" : "none"; }
 
   function notifyDirty(){
     try{ window.webkit.messageHandlers.dirty.postMessage(dirty); }catch(e){}
   }
-  function setDirty(d){ if(dirty !== d){ dirty = d; notifyDirty(); } }
+  function setDirty(d){ if(dirty !== d){ dirty = d; notifyDirty(); updatePreviewNote(); } }
   function autosize(){
+    var s = scroller(), top = s.scrollTop;
+    var minH = mode === "split" ? mainEl.clientHeight : window.innerHeight * 0.7;
     editor.style.height = "auto";
-    editor.style.height = Math.max(editor.scrollHeight + 2, window.innerHeight * 0.7) + "px";
+    editor.style.height = Math.max(editor.scrollHeight + 2, minH) + "px";
+    s.scrollTop = top;   // collapsing to "auto" must not jump the view
   }
+
+  /* ---------- side-by-side preview ---------- */
+  // By default the preview shows the last saved text (like a Sublime preview
+  // that refreshes on save); with Live Preview on it follows the buffer.
+  function previewSource(){ return livePreview ? editor.value : rawMD; }
+  function renderPreview(){
+    if(mode !== "split") return;
+    var src = previewSource();
+    var isEmpty = src.trim() === "";
+    // an empty preview shows a hint, which depends on whether there is unsaved text
+    var key = isEmpty ? "\u0000" + (editor.value.trim() === "" ? "blank" : "unsaved") : src;
+    if(key !== previewFor){
+      preview.innerHTML = !isEmpty ? parseBlocks(src)
+        : '<p class="pv-empty">' + (editor.value.trim() === ""
+            ? "Paste or type Markdown on the left."
+            : "Nothing saved yet &mdash; save (&#8984;S) to render the preview.") + "</p>";
+      previewFor = key;
+      syncPreviewScroll();
+    }
+    updatePreviewNote();
+  }
+  function updatePreviewNote(){
+    var show = mode === "split" && !livePreview && dirty && rawMD.trim() !== "";
+    pvnote.classList.toggle("show", show);
+  }
+  var pvTimer = 0;
+  function schedulePreview(){
+    if(mode !== "split") return;
+    if(!livePreview){ if(rawMD.trim() === "") renderPreview(); return; }
+    clearTimeout(pvTimer);
+    pvTimer = setTimeout(renderPreview, 120);
+  }
+  // editor scroll drives the preview proportionally
+  function syncPreviewScroll(){
+    if(mode !== "split") return;
+    var h = mainEl.scrollHeight - mainEl.clientHeight;
+    var f = h > 0 ? mainEl.scrollTop / h : 0;
+    pane.scrollTop = f * (pane.scrollHeight - pane.clientHeight);
+  }
+  mainEl.addEventListener("scroll", syncPreviewScroll);
+  // the preview is read-only: links open (no ⌘ needed), checkboxes don't toggle
+  preview.addEventListener("mousedown", function(e){
+    if(isCheckbox(e.target) || copyButtonOf(e.target)) e.preventDefault();
+  });
+  preview.addEventListener("click", function(e){
+    var t = e.target;
+    var cbtn = copyButtonOf(t);
+    if(cbtn){ e.preventDefault(); copyCodeBlock(cbtn); return; }
+    var link = t && t.closest ? t.closest("a") : null;
+    if(link){
+      e.preventDefault();
+      var href = link.getAttribute("href") || "";
+      if(href && href.charAt(0) !== "#"){
+        try{ window.webkit.messageHandlers.openLink.postMessage(href); }catch(err){}
+      }
+      return;
+    }
+    if(isCheckbox(t)) e.preventDefault();
+  });
 
   var gutterLines = -1;
   function updateGutter(){
@@ -621,12 +715,14 @@
 
   editor.addEventListener("input", function(){
     setDirty(editor.value !== rawMD); autosize(); updateGutter(); updateStats(editor.value);
+    schedulePreview();
   });
   editor.addEventListener("keydown", function(e){
     if(e.key === "Tab"){
       e.preventDefault();
       editor.setRangeText("  ", editor.selectionStart, editor.selectionEnd, "end");
       setDirty(editor.value !== rawMD); autosize(); updateGutter(); updateStats(editor.value);
+      schedulePreview();
     }
   });
   window.addEventListener("resize", function(){ if(editVisible()) autosize(); });
@@ -709,7 +805,8 @@
 
   window.MDGetContent = function(){ return btoa(unescape(encodeURIComponent(editor.value))); };
   window.MDIsDirty = function(){ return dirty; };
-  window.MDMarkSaved = function(){ rawMD = editor.value; setDirty(false); };
+  window.MDMarkSaved = function(){ rawMD = editor.value; setDirty(false); renderPreview(); };
+  window.MDSetLivePreview = function(on){ livePreview = !!on; renderPreview(); };
 
   /* ---------- find in page ---------- */
   var findQuery = "", findHits = [], findIndex = -1, findOpen = false;
@@ -738,9 +835,11 @@
       var style = window.getComputedStyle(editor);
       var lineHeight = parseFloat(style.lineHeight) || 19.72;
       var paddingTop = parseFloat(style.paddingTop) || 0;
-      var editorTop = editor.getBoundingClientRect().top + window.scrollY;
-      var targetY = editorTop + paddingTop + line * lineHeight - window.innerHeight / 2;
-      window.scrollTo(0, Math.max(0, targetY));
+      var s = scroller();
+      var originTop = mode === "split" ? mainEl.getBoundingClientRect().top : 0;
+      var editorTop = editor.getBoundingClientRect().top - originTop + s.scrollTop;
+      var targetY = editorTop + paddingTop + line * lineHeight - s.clientHeight / 2;
+      s.scrollTop = Math.max(0, targetY);
     } else {
       var el = findHits[findIndex];
       el.classList.add("current");
@@ -826,7 +925,6 @@
   window.MDRender = function(b64){
     var md = decodeURIComponent(escape(atob(b64)));
     rawMD = md;
-    document.getElementById("empty").style.display = "none";
     // if the file caught up with our unsaved edits (e.g. edited externally to
     // the same text), we are clean again
     if(dirty && editor.value === md) setDirty(false);
@@ -842,17 +940,23 @@
     // (rendered-view or edit-view) must not be clobbered by a live reload
     updateGutter();
     updateStats(editor.value);
+    updateEmpty();
+    renderPreview();
     if(findOpen && findQuery) doSearch(findQuery); // keep highlights after live reload
   };
-  window.MDSetMode = function(mode){
-    if(mode === "edit"){
-      document.getElementById("empty").style.display = "none";
+  window.MDSetMode = function(m){
+    var prev = mode;
+    mode = (m === "edit" || m === "split") ? m : "rendered";
+    document.body.classList.toggle("split", mode === "split");
+    if(prev === "split" && mode !== "split") previewFor = null;   // re-render fresh next time
+    if(mode !== "rendered"){
       content.style.display = "none";
       var wasHidden = !editVisible();
       editwrap.style.display = "flex";
       autosize();
       updateGutter();
-      if(wasHidden) editor.focus();
+      if(wasHidden) editor.focus({preventScroll:true});
+      renderPreview();
     } else {
       if(editor.value !== renderedFor){
         // editor holds newer markdown than what the rendered DOM shows
@@ -863,16 +967,18 @@
       editwrap.style.display = "none";
       content.style.display = "block";
     }
+    updateEmpty();
+    updatePreviewNote();
     if(findOpen && findQuery) doSearch(findQuery); // re-search the now-visible view
     else clearMarks();
   };
   window.MDScrollFraction = function(){
-    var h = document.documentElement.scrollHeight - window.innerHeight;
-    return h>0 ? (window.scrollY / h) : 0;
+    var s = scroller(), h = s.scrollHeight - s.clientHeight;
+    return h>0 ? (s.scrollTop / h) : 0;
   };
   window.MDScrollTo = function(frac){
-    var h = document.documentElement.scrollHeight - window.innerHeight;
-    window.scrollTo(0, h*frac);
+    var s = scroller();
+    s.scrollTop = (s.scrollHeight - s.clientHeight) * frac;
   };
 })();
 </script>
