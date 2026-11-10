@@ -89,10 +89,10 @@
   #empty{color:var(--muted);text-align:center;margin-top:30vh;font-size:1.1em;line-height:1.8;}
   /* side-by-side: editor on the left, read-only preview on the right */
   #previewpane{display:none;position:relative;}
-  #preview{max-width:880px;margin:0 auto;word-wrap:break-word;}
+  #preview{max-width:952px;margin:0 auto;padding:28px 36px 120px;word-wrap:break-word;}
   #preview > *:first-child{margin-top:0;}
   #preview .pv-empty{color:var(--muted);text-align:center;margin-top:30vh;}
-  #pvnote{display:none;position:sticky;top:0;z-index:5;margin:-28px -36px 20px;padding:6px 12px;
+  #pvnote{display:none;position:sticky;top:0;z-index:5;padding:6px 12px;
     font-size:12px;color:var(--muted);text-align:center;background:var(--code-bg);
     border-bottom:1px solid var(--border);-webkit-user-select:none;user-select:none;}
   #pvnote.show{display:block;}
@@ -101,7 +101,7 @@
   body.split #main{flex:1 1 50%;min-width:0;overflow:auto;}
   body.split #editwrap{border-radius:0;min-height:100%;}
   body.split #previewpane{display:block;flex:1 1 50%;min-width:0;overflow:auto;
-    border-left:1px solid var(--border);padding:28px 36px 120px;}
+    border-left:1px solid var(--border);}
   /* find bar */
   #findbar{position:fixed;top:12px;right:18px;display:none;align-items:center;gap:4px;
     background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:6px 8px;
