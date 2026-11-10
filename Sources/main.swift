@@ -23,7 +23,7 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
         set { UserDefaults.standard.set(newValue, forKey: liveKey) }
     }
     var onClose: ((ViewerWindowController) -> Void)?
-    /// An untitled window nobody has typed into; opening a file reuses it.
+    /// An untitled window nobody has typed into; opening a file replaces it.
     var isPristineUntitled: Bool { fileURL == nil && !isDirty }
     private var pageReady = false
     private var pendingB64: String?
@@ -102,6 +102,17 @@ final class ViewerWindowController: NSWindowController, WKNavigationDelegate, NS
         widenForSplit()
         if pageReady {
             webView.evaluateJavaScript("window.MDSetMode('\(m)')", completionHandler: nil)
+        }
+    }
+
+    /// Closes an untitled window only once the page confirms its editor is empty.
+    func closeIfEmpty() {
+        guard fileURL == nil, !isDirty else { return }
+        guard pageReady else { window?.close(); return }   // not loaded yet: nothing typed
+        webView.evaluateJavaScript("window.MDGetContent() === ''") { [weak self] result, _ in
+            guard let self = self, (result as? Bool) == true,
+                  self.fileURL == nil, !self.isDirty else { return }
+            self.window?.close()
         }
     }
 
@@ -390,19 +401,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func present(_ url: URL) {
-        // reuse an untouched untitled window if present
-        if let empty = controllers.first(where: { $0.isPristineUntitled }) {
-            empty.open(url)
-            empty.showWindow(nil); empty.window?.makeKeyAndOrderFront(nil)
-            return
-        }
         if let existing = controllers.first(where: { $0.fileURL == url }) {
             existing.showWindow(nil); existing.window?.makeKeyAndOrderFront(nil)
             return
         }
+        // A file always gets a fresh window. Loading it into an existing untitled
+        // window is unsafe: the dirty flag reaches Swift asynchronously, so text
+        // typed a moment earlier could stay in the editor under the file's name,
+        // and saving would overwrite the file with it.
+        let placeholder = controllers.first(where: { $0.isPristineUntitled })
         let c = makeController()
+        if let frame = placeholder?.window?.frame { c.window?.setFrame(frame, display: false) }
         c.open(url)
         c.showWindow(nil); c.window?.makeKeyAndOrderFront(nil)
+        placeholder?.closeIfEmpty()
     }
 
     // MARK: Menu

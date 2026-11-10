@@ -37,7 +37,7 @@ it in a clean, GitHub-style view.
 
 ## Download
 
-Grab `MarkdownReader-1.1-macOS-universal.zip` from
+Grab `MarkdownReader-1.1.1-macOS-universal.zip` from
 [Releases](https://github.com/lashaws/markdown-reader/releases), unzip it, and drag
 **Markdown Reader.app** to `/Applications`. Universal binary — Apple Silicon and Intel,
 macOS 11+.
